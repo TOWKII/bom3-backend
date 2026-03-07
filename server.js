@@ -1,10 +1,13 @@
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const Member = require("./models/Member");
 const Log = require("./models/Log");
+const User = require("./models/User");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -18,6 +21,105 @@ mongoose.connect(process.env.MONGO_URI)
 })
 .catch((error) => {
     console.error("MongoDB connection error:", error.message);
+});
+
+/* REGISTER USER */
+app.post("/register", async (req, res) => {
+    try {
+        const { email, password, role } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                message: "Email and password are required."
+            });
+        }
+
+        const existingUser = await User.findOne({
+            email: email.trim().toLowerCase()
+        });
+
+        if (existingUser) {
+            return res.status(400).json({
+                message: "User already exists."
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const newUser = await User.create({
+            email: email.trim().toLowerCase(),
+            password: hashedPassword,
+            role: role || "member"
+        });
+
+        res.json({
+            message: "Account created successfully",
+            user: {
+                email: newUser.email,
+                role: newUser.role
+            }
+        });
+    } catch (error) {
+        console.error("Register error:", error.message);
+        res.status(500).json({
+            message: "Server error while creating account."
+        });
+    }
+});
+
+/* LOGIN USER */
+app.post("/login", async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                message: "Email and password are required."
+            });
+        }
+
+        const user = await User.findOne({
+            email: email.trim().toLowerCase()
+        });
+
+        if (!user) {
+            return res.status(400).json({
+                message: "Invalid email or password."
+            });
+        }
+
+        const validPassword = await bcrypt.compare(password, user.password);
+
+        if (!validPassword) {
+            return res.status(400).json({
+                message: "Invalid email or password."
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                id: user._id,
+                email: user.email,
+                role: user.role
+            },
+            "secretkey",
+            { expiresIn: "1d" }
+        );
+
+        res.json({
+            message: "Login successful",
+            token,
+            user: {
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        console.error("Login error:", error.message);
+        res.status(500).json({
+            message: "Server error while logging in."
+        });
+    }
 });
 
 /* ADD MEMBER */
