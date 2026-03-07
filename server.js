@@ -11,19 +11,42 @@ const User = require("./models/User");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI)
-.then(() => {
-    console.log("MongoDB connected");
-})
-.catch((error) => {
-    console.error("MongoDB connection error:", error.message);
+/* -------------------- HELPERS -------------------- */
+const normalizeEmail = (email = "") => email.trim().toLowerCase();
+const normalizeBadge = (badge = "") => badge.trim().toUpperCase();
+const normalizeText = (text = "") => text.trim();
+
+const createLog = async (action, user = "system") => {
+    try {
+        await Log.create({ action, user });
+    } catch (error) {
+        console.error("Log creation error:", error.message);
+    }
+};
+
+/* -------------------- DATABASE -------------------- */
+mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+        console.log("MongoDB connected");
+    })
+    .catch((error) => {
+        console.error("MongoDB connection error:", error.message);
+    });
+
+/* -------------------- ROOT -------------------- */
+app.get("/", (req, res) => {
+    res.json({
+        message: "BOM3 backend is running"
+    });
 });
 
-/* REGISTER USER */
+/* -------------------- REGISTER USER -------------------- */
 app.post("/register", async (req, res) => {
     try {
         const { email, password, role } = req.body;
@@ -34,9 +57,9 @@ app.post("/register", async (req, res) => {
             });
         }
 
-        const existingUser = await User.findOne({
-            email: email.trim().toLowerCase()
-        });
+        const cleanEmail = normalizeEmail(email);
+
+        const existingUser = await User.findOne({ email: cleanEmail });
 
         if (existingUser) {
             return res.status(400).json({
@@ -47,10 +70,12 @@ app.post("/register", async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const newUser = await User.create({
-            email: email.trim().toLowerCase(),
+            email: cleanEmail,
             password: hashedPassword,
             role: role || "member"
         });
+
+        await createLog(`Account registered: ${cleanEmail}`, cleanEmail);
 
         res.json({
             message: "Account created successfully",
@@ -67,7 +92,7 @@ app.post("/register", async (req, res) => {
     }
 });
 
-/* LOGIN USER */
+/* -------------------- LOGIN USER -------------------- */
 app.post("/login", async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -78,9 +103,9 @@ app.post("/login", async (req, res) => {
             });
         }
 
-        const user = await User.findOne({
-            email: email.trim().toLowerCase()
-        });
+        const cleanEmail = normalizeEmail(email);
+
+        const user = await User.findOne({ email: cleanEmail });
 
         if (!user) {
             return res.status(400).json({
@@ -102,9 +127,11 @@ app.post("/login", async (req, res) => {
                 email: user.email,
                 role: user.role
             },
-            "secretkey",
+            JWT_SECRET,
             { expiresIn: "1d" }
         );
+
+        await createLog(`Login successful: ${cleanEmail}`, cleanEmail);
 
         res.json({
             message: "Login successful",
@@ -122,7 +149,7 @@ app.post("/login", async (req, res) => {
     }
 });
 
-/* ADD MEMBER */
+/* -------------------- ADD MEMBER -------------------- */
 app.post("/members", async (req, res) => {
     try {
         const { firstName, lastName, email, address, phone, badge } = req.body;
@@ -133,20 +160,17 @@ app.post("/members", async (req, res) => {
             });
         }
 
-        const badgeExists = await Member.findOne({
-            badge: badge.trim().toUpperCase()
-        });
+        const cleanEmail = normalizeEmail(email);
+        const cleanBadge = normalizeBadge(badge);
 
+        const badgeExists = await Member.findOne({ badge: cleanBadge });
         if (badgeExists) {
             return res.status(400).json({
                 message: "Badge number already exists."
             });
         }
 
-        const emailExists = await Member.findOne({
-            email: email.trim().toLowerCase()
-        });
-
+        const emailExists = await Member.findOne({ email: cleanEmail });
         if (emailExists) {
             return res.status(400).json({
                 message: "Email already exists."
@@ -154,15 +178,15 @@ app.post("/members", async (req, res) => {
         }
 
         const newMember = await Member.create({
-            firstName,
-            lastName,
-            email,
-            address,
-            phone,
-            badge
+            firstName: normalizeText(firstName),
+            lastName: normalizeText(lastName),
+            email: cleanEmail,
+            address: normalizeText(address),
+            phone: normalizeText(phone),
+            badge: cleanBadge
         });
 
-        console.log("New member added:", newMember);
+        await createLog(`Member added: ${cleanEmail}`, cleanEmail);
 
         res.json({
             message: "Member added successfully",
@@ -176,11 +200,28 @@ app.post("/members", async (req, res) => {
     }
 });
 
-/* GET ALL MEMBERS */
+/* -------------------- GET ALL MEMBERS WITH ACCOUNT STATUS -------------------- */
 app.get("/members", async (req, res) => {
     try {
         const members = await Member.find().sort({ createdAt: -1 });
-        res.json(members);
+        const users = await User.find({}, "email role");
+
+        const userMap = new Map();
+        users.forEach((user) => {
+            userMap.set(normalizeEmail(user.email), user);
+        });
+
+        const mergedMembers = members.map((member) => {
+            const matchedUser = userMap.get(normalizeEmail(member.email));
+
+            return {
+                ...member.toObject(),
+                hasAccount: !!matchedUser,
+                accountRole: matchedUser ? matchedUser.role : null
+            };
+        });
+
+        res.json(mergedMembers);
     } catch (error) {
         console.error("Get members error:", error.message);
         res.status(500).json({
@@ -189,12 +230,81 @@ app.get("/members", async (req, res) => {
     }
 });
 
-/* DELETE MEMBER */
+/* -------------------- GET ALL USERS -------------------- */
+app.get("/users", async (req, res) => {
+    try {
+        const users = await User.find({}, "-password").sort({ createdAt: -1 });
+        res.json(users);
+    } catch (error) {
+        console.error("Get users error:", error.message);
+        res.status(500).json({
+            message: "Server error while fetching users."
+        });
+    }
+});
+
+/* -------------------- UPGRADE / CHANGE USER ROLE -------------------- */
+app.patch("/users/:email/role", async (req, res) => {
+    try {
+        const email = normalizeEmail(req.params.email);
+        const { role } = req.body;
+
+        if (!role) {
+            return res.status(400).json({
+                message: "Role is required."
+            });
+        }
+
+        const allowedRoles = ["member", "admin", "owner"];
+        if (!allowedRoles.includes(role)) {
+            return res.status(400).json({
+                message: "Invalid role."
+            });
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            { email },
+            { role },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({
+                message: "No account found for this email."
+            });
+        }
+
+        await createLog(`Role updated to ${role}: ${email}`, email);
+
+        res.json({
+            message: "User role updated successfully",
+            user: {
+                email: updatedUser.email,
+                role: updatedUser.role
+            }
+        });
+    } catch (error) {
+        console.error("Update role error:", error.message);
+        res.status(500).json({
+            message: "Server error while updating role."
+        });
+    }
+});
+
+/* -------------------- DELETE MEMBER -------------------- */
 app.delete("/members/:email", async (req, res) => {
     try {
-        const email = req.params.email.trim().toLowerCase();
+        const email = normalizeEmail(req.params.email);
 
-        await Member.findOneAndDelete({ email });
+        const deletedMember = await Member.findOneAndDelete({ email });
+
+        if (!deletedMember) {
+            return res.status(404).json({
+                message: "Member not found."
+            });
+        }
+
+        await createLog(`Member removed: ${email}`, email);
 
         res.json({
             message: "Member removed successfully"
@@ -207,7 +317,33 @@ app.delete("/members/:email", async (req, res) => {
     }
 });
 
-/* ADD LOG */
+/* -------------------- DELETE USER ACCOUNT -------------------- */
+app.delete("/users/:email", async (req, res) => {
+    try {
+        const email = normalizeEmail(req.params.email);
+
+        const deletedUser = await User.findOneAndDelete({ email });
+
+        if (!deletedUser) {
+            return res.status(404).json({
+                message: "User account not found."
+            });
+        }
+
+        await createLog(`Account deleted: ${email}`, email);
+
+        res.json({
+            message: "User account deleted successfully"
+        });
+    } catch (error) {
+        console.error("Delete user error:", error.message);
+        res.status(500).json({
+            message: "Server error while deleting user account."
+        });
+    }
+});
+
+/* -------------------- ADD LOG -------------------- */
 app.post("/logs", async (req, res) => {
     try {
         const { action, user } = req.body;
@@ -219,8 +355,8 @@ app.post("/logs", async (req, res) => {
         }
 
         const newLog = await Log.create({
-            action,
-            user
+            action: normalizeText(action),
+            user: normalizeText(user || "system")
         });
 
         res.json({
@@ -235,7 +371,7 @@ app.post("/logs", async (req, res) => {
     }
 });
 
-/* GET ALL LOGS */
+/* -------------------- GET ALL LOGS -------------------- */
 app.get("/logs", async (req, res) => {
     try {
         const logs = await Log.find().sort({ createdAt: -1 });
@@ -248,7 +384,7 @@ app.get("/logs", async (req, res) => {
     }
 });
 
-/* CLEAR LOGS */
+/* -------------------- CLEAR LOGS -------------------- */
 app.delete("/logs", async (req, res) => {
     try {
         await Log.deleteMany({});
@@ -263,6 +399,7 @@ app.delete("/logs", async (req, res) => {
     }
 });
 
+/* -------------------- START SERVER -------------------- */
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
