@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 
 const Member = require("./models/Member");
+const Log = require("./models/Log");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -12,12 +13,12 @@ app.use(cors());
 app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log("MongoDB connected");
-    })
-    .catch((error) => {
-        console.error("MongoDB connection error:", error.message);
-    });
+.then(() => {
+    console.log("MongoDB connected");
+})
+.catch((error) => {
+    console.error("MongoDB connection error:", error.message);
+});
 
 /* ADD MEMBER */
 app.post("/members", async (req, res) => {
@@ -100,6 +101,62 @@ app.delete("/members/:email", async (req, res) => {
         console.error("Delete member error:", error.message);
         res.status(500).json({
             message: "Server error while deleting member."
+        });
+    }
+});
+
+/* ADD LOG */
+app.post("/logs", async (req, res) => {
+    try {
+        const { action, user } = req.body;
+
+        if (!action) {
+            return res.status(400).json({
+                message: "Action is required."
+            });
+        }
+
+        const newLog = await Log.create({
+            action,
+            user
+        });
+
+        res.json({
+            message: "Log added successfully",
+            log: newLog
+        });
+    } catch (error) {
+        console.error("Add log error:", error.message);
+        res.status(500).json({
+            message: "Server error while adding log."
+        });
+    }
+});
+
+/* GET ALL LOGS */
+app.get("/logs", async (req, res) => {
+    try {
+        const logs = await Log.find().sort({ createdAt: -1 });
+        res.json(logs);
+    } catch (error) {
+        console.error("Get logs error:", error.message);
+        res.status(500).json({
+            message: "Server error while fetching logs."
+        });
+    }
+});
+
+/* CLEAR LOGS */
+app.delete("/logs", async (req, res) => {
+    try {
+        await Log.deleteMany({});
+        res.json({
+            message: "All logs cleared successfully"
+        });
+    } catch (error) {
+        console.error("Clear logs error:", error.message);
+        res.status(500).json({
+            message: "Server error while clearing logs."
         });
     }
 });
