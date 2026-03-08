@@ -190,7 +190,7 @@ app.post("/login", async (req, res) => {
 
 
 /* GET ALL USERS (OWNER ONLY) */
-app.get("/users", verifyToken, allowRoles("owner"), async (req, res) => {
+app.get("/users", verifyToken, allowRoles("owner", "admin"), async (req, res) => {
 
     try {
 
