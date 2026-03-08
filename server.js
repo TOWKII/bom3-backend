@@ -471,7 +471,31 @@ app.delete("/logs", verifyToken, allowRoles("owner"), async (req, res) => {
 
 });
 
+app.get("/members/me", verifyToken, async (req, res) => {
+    try {
 
+        const member = await Member.findOne({
+            email: req.user.email.trim().toLowerCase()
+        });
+
+        if (!member) {
+            return res.status(404).json({
+                message: "Member not found."
+            });
+        }
+
+        res.json(member);
+
+    } catch (error) {
+
+        console.error("Get member error:", error.message);
+
+        res.status(500).json({
+            message: "Server error while fetching member."
+        });
+
+    }
+});
 app.listen(PORT, () => {
 
     console.log(`Server running on port ${PORT}`);
