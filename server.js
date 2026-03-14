@@ -75,16 +75,31 @@ app.post("/register", async (req, res) => {
 
     try {
 
-        const { email, password, role } = req.body;
+        const { email, password } = req.body;
 
-        if (!email || !password) {
+        const cleanEmail = email?.trim().toLowerCase();
+        const cleanPassword = password?.trim();
+
+        if (!cleanEmail || !cleanPassword) {
             return res.status(400).json({
                 message: "Email and password are required."
             });
         }
 
+        /* CHECK IF MEMBER EXISTS */
+        const memberExists = await Member.findOne({
+            email: cleanEmail
+        });
+
+        if (!memberExists) {
+            return res.status(400).json({
+                message: "This email is not registered as a member."
+            });
+        }
+
+        /* CHECK IF ACCOUNT ALREADY EXISTS */
         const existingUser = await User.findOne({
-            email: email.trim().toLowerCase()
+            email: cleanEmail
         });
 
         if (existingUser) {
@@ -93,15 +108,17 @@ app.post("/register", async (req, res) => {
             });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        /* HASH PASSWORD */
+        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
 
+        /* CREATE USER */
         const newUser = await User.create({
-            email: email.trim().toLowerCase(),
+            email: cleanEmail,
             password: hashedPassword,
-            role: role || "member"
+            role: "member"
         });
 
-        res.json({
+        res.status(201).json({
             message: "Account created successfully",
             user: {
                 email: newUser.email,
@@ -112,7 +129,13 @@ app.post("/register", async (req, res) => {
     }
     catch (error) {
 
-        console.error("Register error:", error.message);
+        console.error("Register error:", error);
+
+        if (error.code === 11000) {
+            return res.status(400).json({
+                message: "User already exists."
+            });
+        }
 
         res.status(500).json({
             message: "Server error while creating account."
